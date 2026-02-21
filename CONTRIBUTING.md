@@ -7,7 +7,7 @@ Thanks for your interest in contributing! Here's how to get started.
 1. Fork and clone the repository:
 
 ```bash
-git clone https://github.com/<your-username>/mp3-to-nbs.git
+git clone https://github.com/devRaikou/mp3-to-nbs.git
 cd mp3-to-nbs
 ```
 
