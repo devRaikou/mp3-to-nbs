@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mp3-to-nbs"
+version = "0.1.0"
+description = "Convert MP3 audio files to Minecraft Note Block Studio (.nbs) format"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "devra"},
+]
+keywords = ["minecraft", "noteblock", "nbs", "music", "converter", "mp3"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Conversion",
+    "Topic :: Games/Entertainment",
+]
+dependencies = [
+    "librosa>=0.10.0",
+    "pynbs>=1.0.0",
+    "numpy>=1.22.0",
+    "soundfile>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+mp3-to-nbs = "mp3_to_nbs.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/devra/mp3-to-nbs"
+Repository = "https://github.com/devra/mp3-to-nbs"
+"Bug Tracker" = "https://github.com/devra/mp3-to-nbs/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
