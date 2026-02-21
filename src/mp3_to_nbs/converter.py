@@ -95,12 +95,14 @@ def _map_notes(
             default_instrument=config.instrument,
         )
 
-        velocity = int(round(note.amplitude * 100))
-        velocity = max(0, min(100, velocity))
+        # Map amplitude to velocity with a minimum floor.
+        # NBS velocity 0 = silent, 100 = max. We enforce a minimum of 40
+        # so that even quiet notes remain audible in Note Block Studio.
+        raw_velocity = int(round(note.amplitude * 100))
+        if raw_velocity <= 0:
+            continue  # truly silent, skip
 
-        # Skip silent notes
-        if velocity == 0:
-            continue
+        velocity = max(40, min(100, raw_velocity))
 
         nbs_notes.append(
             NBSNote(

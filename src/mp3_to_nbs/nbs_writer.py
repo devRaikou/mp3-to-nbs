@@ -8,6 +8,7 @@ Handles note placement across layers and sets header metadata.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,9 +28,9 @@ class NBSNote:
 
     Attributes:
         tick: Horizontal position (time) in the song.
-        instrument: Vanilla instrument ID (0–15).
-        key: NBS key (0–24).
-        velocity: Note velocity (0–100).
+        instrument: Vanilla instrument ID (0-15).
+        key: NBS key (0-24).
+        velocity: Note velocity (0-100).
         panning: Stereo panning (0=left, 100=center, 200=right).
         pitch: Fine pitch adjustment in cents (-100 to +100).
     """
@@ -63,11 +64,7 @@ def _allocate_layers(
     Returns:
         List of (note, layer_index) tuples.
     """
-    # Track which layers are occupied at each tick
     placed: list[tuple[NBSNote, int]] = []
-
-    # Group notes by tick for overflow handling
-    from collections import defaultdict
 
     by_tick: dict[int, list[NBSNote]] = defaultdict(list)
     for note in notes:
@@ -75,14 +72,14 @@ def _allocate_layers(
 
     for tick in sorted(by_tick):
         tick_notes = by_tick[tick]
-        # Sort by velocity descending — drop quietest if overflow
+        # Sort by velocity descending - drop quietest if overflow
         tick_notes.sort(key=lambda n: n.velocity, reverse=True)
 
         occupied: set[int] = set()
         for note in tick_notes:
             if len(occupied) >= max_layers:
                 logger.debug(
-                    "Layer overflow at tick %d — dropping note (key=%d, vel=%d)",
+                    "Layer overflow at tick %d - dropping note (key=%d, vel=%d)",
                     tick,
                     note.key,
                     note.velocity,
@@ -135,7 +132,7 @@ def write_nbs(
     output.parent.mkdir(parents=True, exist_ok=True)
 
     if not notes:
-        logger.warning("No notes to write — creating empty NBS file")
+        logger.warning("No notes to write - creating empty NBS file")
 
     # Sort notes by tick for consistent layer allocation
     sorted_notes = sorted(notes, key=lambda n: (n.tick, -n.velocity))
@@ -149,7 +146,7 @@ def write_nbs(
         song_author=song_author,
         original_author=original_author,
         description=description,
-        tempo=tempo,  # pynbs handles the *100 internally when saving
+        tempo=tempo,
     )
 
     # Add notes
@@ -166,19 +163,26 @@ def write_nbs(
             )
         )
 
-    # Configure layers
-    max_layer_used = max((layer for _, layer in placed), default=0)
-    while len(nbs_file.layers) <= max_layer_used:
-        layer_id = len(nbs_file.layers)
+    # Rebuild ALL layers from scratch with correct settings.
+    # pynbs auto-creates layers with pan=0 which can cause issues.
+    max_layer_used = max((layer for _, layer in placed), default=0) if placed else 0
+    total_layers = max_layer_used + 1
+
+    nbs_file.layers.clear()
+    for layer_id in range(total_layers):
         nbs_file.layers.append(
             pynbs.Layer(
                 id=layer_id,
                 name=f"Layer {layer_id + 1}",
                 lock=False,
                 volume=100,
-                panning=100,
+                panning=100,  # 100 = center (NBS spec: 0=left, 100=center, 200=right)
             )
         )
+
+    # Update header to match actual content
+    nbs_file.header.song_layers = total_layers
+    nbs_file.header.song_length = max((n.tick for n in nbs_file.notes), default=0)
 
     # Save
     nbs_file.save(str(output))
@@ -186,7 +190,7 @@ def write_nbs(
         "NBS file saved: %s (%d notes across %d layers)",
         output.name,
         len(placed),
-        max_layer_used + 1,
+        total_layers,
     )
 
     return output
