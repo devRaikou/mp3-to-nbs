@@ -2,18 +2,17 @@
 Audio analysis pipeline.
 
 Handles audio loading, pitch tracking, onset detection, and amplitude
-extraction via librosa. Uses multiple strategies to capture both
-melody and bass from complex, polyphonic audio:
+extraction via librosa. Uses multiple strategies to capture accurate
+notes from complex, polyphonic audio:
 
-1. **Harmonic separation**: splits audio into harmonic and percussive
-   components so melody can be tracked independently from bass.
-2. **Multi-octave chromagram**: detects which pitch classes are active
-   at each frame, producing a wider note range than single-voice pYIN.
-3. **pYIN pitch tracking**: used on the harmonic component for precise
-   single-voice pitch detection.
+1. **CQT peak detection**: uses the full Constant-Q Transform spectrum
+   to find active notes with precise frequency and octave information.
+   Unlike chromagram, CQT preserves octave — no guessing needed.
+2. **pYIN pitch tracking**: runs on the harmonic component for precise
+   single-voice melody tracking.
+3. **Onset + multi-pitch**: detects polyphonic attacks using piptrack.
 
-The strategies are combined and deduplicated to produce the final
-note list.
+The strategies are combined and deduplicated.
 """
 
 from __future__ import annotations
@@ -94,11 +93,7 @@ def load_audio(path: str | Path, sample_rate: int = 22050) -> AudioData:
 # ---------------------------------------------------------------------------
 
 
-def _compute_rms(
-    y: np.ndarray,
-    sr: int,
-    hop_length: int,
-) -> np.ndarray:
+def _compute_rms(y: np.ndarray, sr: int, hop_length: int) -> np.ndarray:
     """Compute per-frame RMS energy, normalised to [0, 1]."""
     rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
     rms_max = rms.max()
@@ -108,157 +103,151 @@ def _compute_rms(
 
 
 # ---------------------------------------------------------------------------
-# Strategy 1: Chromagram-based multi-octave note extraction
+# Strategy 1: CQT-based note detection (primary — preserves octave)
 # ---------------------------------------------------------------------------
 
 
-def _extract_notes_chroma(
+def _extract_notes_cqt(
     y: np.ndarray,
     sr: int,
     config: ConversionConfig,
 ) -> list[DetectedNote]:
-    """Extract notes using chromagram analysis across multiple octaves.
+    """Extract notes using Constant-Q Transform peak picking.
 
-    The CQT chromagram detects which pitch classes (C, C#, D, ..., B)
-    are active at each frame. We then assign octaves based on the
-    spectral centroid and energy distribution across frequency bands.
+    Unlike chromagram which folds all octaves together, the CQT
+    preserves the full frequency spectrum. Each CQT bin maps to a
+    specific MIDI note, giving us both the pitch class AND the
+    correct octave directly.
 
-    This produces a much wider variety of notes than single-voice
-    pitch tracking.
+    We pick the top active peaks per frame and group consecutive
+    activations of the same note into note events.
     """
     hop = config.hop_length
+    fmin = max(config.min_frequency, librosa.note_to_hz("C2"))
+    n_bins = 48  # 4 octaves * 12 bins/octave (C2 to B5)
 
-    # Compute CQT chromagram (12 pitch classes)
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=hop, n_chroma=12, threshold=0.1)
+    # Compute CQT magnitude
+    cqt = np.abs(
+        librosa.cqt(
+            y=y,
+            sr=sr,
+            hop_length=hop,
+            fmin=fmin,
+            n_bins=n_bins,
+            bins_per_octave=12,
+        )
+    )
 
-    # Compute spectral centroid to estimate octave at each frame
-    centroid = librosa.feature.spectral_centroid(y=y, sr=sr, hop_length=hop)[0]
+    # Convert to dB and normalise
+    cqt_db = librosa.amplitude_to_db(cqt, ref=cqt.max())
+    cqt_norm = (cqt_db - cqt_db.min()) / (cqt_db.max() - cqt_db.min() + 1e-8)
 
-    # Compute RMS for amplitude
+    # Get the actual frequency for each CQT bin
+    cqt_freqs = librosa.cqt_frequencies(n_bins=n_bins, fmin=fmin, bins_per_octave=12)
+
+    times = librosa.times_like(cqt[0], sr=sr, hop_length=hop)
     rms = _compute_rms(y, sr, hop)
 
-    times = librosa.times_like(chroma[0], sr=sr, hop_length=hop)
+    # Activation threshold (notes below this are considered inactive)
+    threshold = 0.25
 
-    # Base frequencies for each chroma bin in octave 3, 4, and 5
-    chroma_base_freqs = {
-        3: [
-            130.81,
-            138.59,
-            146.83,
-            155.56,
-            164.81,
-            174.61,
-            185.00,
-            196.00,
-            207.65,
-            220.00,
-            233.08,
-            246.94,
-        ],
-        4: [
-            261.63,
-            277.18,
-            293.66,
-            311.13,
-            329.63,
-            349.23,
-            369.99,
-            392.00,
-            415.30,
-            440.00,
-            466.16,
-            493.88,
-        ],
-        5: [
-            523.25,
-            554.37,
-            587.33,
-            622.25,
-            659.26,
-            698.46,
-            739.99,
-            783.99,
-            830.61,
-            880.00,
-            932.33,
-            987.77,
-        ],
-    }
+    # Maximum simultaneous notes per frame
+    max_simultaneous = 6
 
-    # Threshold for chroma energy activation
-    chroma_threshold = 0.35
-
+    # Track active note regions: bin_idx -> (start_frame, amplitudes)
+    active: dict[int, tuple[int, list[float]]] = {}
     notes: list[DetectedNote] = []
-    # Track active regions per chroma bin
-    active: dict[int, tuple[float, list[float]]] = {}  # bin -> (start_time, amps)
 
-    for frame_idx in range(len(times)):
-        t = float(times[frame_idx])
+    n_frames = cqt_norm.shape[1]
+
+    for frame_idx in range(n_frames):
         rms_idx = min(frame_idx, len(rms) - 1)
-        amp = float(rms[rms_idx])
+        frame_rms = float(rms[rms_idx])
 
-        # Determine octave from spectral centroid
-        cent = float(centroid[min(frame_idx, len(centroid) - 1)])
-        if cent < 200:
-            octave = 3
-        elif cent < 500:
-            octave = 4
-        else:
-            octave = 5
+        # Find active bins this frame (above threshold)
+        frame_values = cqt_norm[:, frame_idx]
 
-        for bin_idx in range(12):
-            energy = float(chroma[bin_idx, frame_idx])
+        # Pick top peaks
+        active_bins = set()
+        top_indices = np.argsort(frame_values)[::-1][:max_simultaneous]
+        for bin_idx in top_indices:
+            if frame_values[bin_idx] >= threshold:
+                active_bins.add(int(bin_idx))
 
-            if energy > chroma_threshold:
-                if bin_idx not in active:
-                    active[bin_idx] = (t, [amp])
-                else:
-                    active[bin_idx][1].append(amp)
+        # End regions for bins that are no longer active
+        ended_bins = [b for b in active if b not in active_bins]
+        for bin_idx in ended_bins:
+            start_frame, amps = active.pop(bin_idx)
+            _emit_cqt_note(
+                notes,
+                bin_idx,
+                start_frame,
+                frame_idx,
+                amps,
+                times,
+                cqt_freqs,
+                config,
+            )
+
+        # Start or continue regions for active bins
+        for bin_idx in active_bins:
+            if bin_idx in active:
+                active[bin_idx][1].append(frame_rms)
             else:
-                if bin_idx in active:
-                    start_t, amps = active.pop(bin_idx)
-                    duration = t - start_t
-
-                    if duration >= 0.04:  # Minimum 40ms
-                        mean_amp = float(np.mean(amps))
-                        mean_amp = mean_amp**config.velocity_sensitivity
-                        mean_amp = max(0.0, min(1.0, mean_amp))
-
-                        if mean_amp > 0.01:
-                            freq = chroma_base_freqs[octave][bin_idx]
-                            notes.append(
-                                DetectedNote(
-                                    time=start_t,
-                                    frequency=freq,
-                                    amplitude=mean_amp,
-                                    duration=duration,
-                                )
-                            )
+                active[bin_idx] = (frame_idx, [frame_rms])
 
     # Emit remaining active notes
-    end_time = float(times[-1]) if len(times) > 0 else 0
-    for bin_idx, (start_t, amps) in active.items():
-        duration = end_time - start_t
-        if duration >= 0.04:
-            mean_amp = float(np.mean(amps))
-            mean_amp = mean_amp**config.velocity_sensitivity
-            mean_amp = max(0.0, min(1.0, mean_amp))
-            if mean_amp > 0.01:
-                freq = chroma_base_freqs[4][bin_idx]
-                notes.append(
-                    DetectedNote(
-                        time=start_t,
-                        frequency=freq,
-                        amplitude=mean_amp,
-                        duration=duration,
-                    )
-                )
+    for bin_idx, (start_frame, amps) in active.items():
+        _emit_cqt_note(
+            notes,
+            bin_idx,
+            start_frame,
+            n_frames - 1,
+            amps,
+            times,
+            cqt_freqs,
+            config,
+        )
 
     return notes
 
 
+def _emit_cqt_note(
+    notes: list[DetectedNote],
+    bin_idx: int,
+    start_frame: int,
+    end_frame: int,
+    amps: list[float],
+    times: np.ndarray,
+    cqt_freqs: np.ndarray,
+    config: ConversionConfig,
+) -> None:
+    """Emit a note from a CQT region."""
+    start_time = float(times[min(start_frame, len(times) - 1)])
+    end_time = float(times[min(end_frame, len(times) - 1)])
+    duration = end_time - start_time
+
+    if duration < 0.03:  # Skip very short activations (< 30ms)
+        return
+
+    freq = float(cqt_freqs[bin_idx])
+    amp = float(np.mean(amps))
+    amp = amp**config.velocity_sensitivity
+    amp = max(0.0, min(1.0, amp))
+
+    if amp > 0.01:
+        notes.append(
+            DetectedNote(
+                time=start_time,
+                frequency=freq,
+                amplitude=amp,
+                duration=duration,
+            )
+        )
+
+
 # ---------------------------------------------------------------------------
-# Strategy 2: pYIN frame-based pitch tracking on harmonic component
+# Strategy 2: pYIN on harmonic component
 # ---------------------------------------------------------------------------
 
 
@@ -270,7 +259,8 @@ def _extract_notes_pyin(
     """Track pitch on the harmonic component using pYIN.
 
     Groups consecutive voiced frames with similar pitch into note
-    events.
+    events. pYIN is very accurate for single-voice melody but only
+    returns one pitch per frame.
     """
     hop = config.hop_length
     min_freq = config.min_frequency
@@ -285,7 +275,6 @@ def _extract_notes_pyin(
     rms = _compute_rms(y, sr, hop)
 
     notes: list[DetectedNote] = []
-
     region_start = None
     region_freqs: list[float] = []
     region_amps: list[float] = []
@@ -346,7 +335,7 @@ def _extract_notes_pyin(
 
 
 # ---------------------------------------------------------------------------
-# Strategy 3: Onset + multi-pitch detection
+# Strategy 3: Onset + multi-pitch
 # ---------------------------------------------------------------------------
 
 
@@ -358,11 +347,10 @@ def _extract_notes_onset(
     """Detect onsets and sample multiple pitches at each onset.
 
     Uses piptrack to find multiple simultaneous pitches at each
-    onset, producing polyphonic note detection.
+    attack point.
     """
     hop = config.hop_length
 
-    # Detect onsets
     onset_env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
     delta = 0.2 - 0.18 * config.onset_sensitivity
     onset_frames = librosa.onset.onset_detect(
@@ -375,7 +363,6 @@ def _extract_notes_onset(
     )
     onset_times = librosa.frames_to_time(onset_frames, sr=sr, hop_length=hop)
 
-    # Multi-pitch via piptrack
     pitches, magnitudes = librosa.piptrack(
         y=y,
         sr=sr,
@@ -396,10 +383,8 @@ def _extract_notes_onset(
             np.argmin(np.abs(librosa.times_like(pitches[0], sr=sr, hop_length=hop) - onset_t))
         )
 
-        # Find top 3 pitches by magnitude at this frame
         frame_mags = magnitudes[:, frame]
         frame_pitches = pitches[:, frame]
-
         top_bins = np.argsort(frame_mags)[::-1][:3]
 
         rms_idx = int(np.argmin(np.abs(rms_times - onset_t)))
@@ -438,12 +423,7 @@ def _deduplicate_notes(
     time_tolerance: float = 0.05,
     freq_tolerance: float = 0.06,
 ) -> list[DetectedNote]:
-    """Remove duplicate notes that are very close in time and frequency.
-
-    Two notes are considered duplicates if they are within
-    ``time_tolerance`` seconds and within ``freq_tolerance`` ratio
-    of each other's frequency.
-    """
+    """Remove duplicate notes that are very close in time and frequency."""
     if not notes:
         return notes
 
@@ -461,7 +441,6 @@ def _deduplicate_notes(
             freq_close = False
 
         if time_close and freq_close:
-            # Keep the louder one
             if note.amplitude > prev.amplitude:
                 result[-1] = note
         else:
@@ -481,11 +460,11 @@ def analyze(
 ) -> list[DetectedNote]:
     """Run the full analysis pipeline on loaded audio.
 
-    Combines three strategies for maximum coverage:
-        1. Chromagram analysis — captures active pitch classes with
-           octave estimation from spectral centroid.
-        2. pYIN on harmonic component — precise single-voice tracking.
-        3. Onset + multi-pitch — detects polyphonic attacks.
+    Combines three strategies for maximum coverage and accuracy:
+        1. CQT peak detection — captures notes with correct octave
+           directly from the frequency spectrum.
+        2. pYIN on harmonic component — precise monophonic melody.
+        3. Onset + multi-pitch — polyphonic attack detection.
 
     Results are merged, deduplicated, and sorted by time.
     """
@@ -494,15 +473,15 @@ def analyze(
 
     # Separate harmonic and percussive components
     logger.info("Separating harmonic/percussive components")
-    y_harmonic, y_percussive = librosa.effects.hpss(y)
+    y_harmonic, _ = librosa.effects.hpss(y)
 
-    # Strategy 1: Chromagram on full audio
-    logger.info("Running chromagram analysis")
-    chroma_notes = _extract_notes_chroma(y, sr, config)
-    logger.info("Chromagram: %d notes", len(chroma_notes))
+    # Strategy 1: CQT on full audio (most accurate octave info)
+    logger.info("Running CQT peak detection")
+    cqt_notes = _extract_notes_cqt(y, sr, config)
+    logger.info("CQT: %d notes", len(cqt_notes))
 
-    # Strategy 2: pYIN on harmonic component
-    logger.info("Running pYIN pitch tracking on harmonic component")
+    # Strategy 2: pYIN on harmonic component (precise melody)
+    logger.info("Running pYIN on harmonic component")
     pyin_notes = _extract_notes_pyin(y_harmonic, sr, config)
     logger.info("pYIN (harmonic): %d notes", len(pyin_notes))
 
@@ -512,7 +491,7 @@ def analyze(
     logger.info("Onset multi-pitch: %d notes", len(onset_notes))
 
     # Merge all notes
-    all_notes = chroma_notes + pyin_notes + onset_notes
+    all_notes = cqt_notes + pyin_notes + onset_notes
 
     # Deduplicate
     all_notes = _deduplicate_notes(all_notes)
@@ -521,9 +500,9 @@ def analyze(
     all_notes.sort(key=lambda n: n.time)
 
     logger.info(
-        "Analysis complete: %d notes detected (chroma=%d, pyin=%d, onset=%d)",
+        "Analysis complete: %d notes (cqt=%d, pyin=%d, onset=%d)",
         len(all_notes),
-        len(chroma_notes),
+        len(cqt_notes),
         len(pyin_notes),
         len(onset_notes),
     )
