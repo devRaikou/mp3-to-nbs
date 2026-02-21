@@ -2,7 +2,7 @@
 
 import pytest
 
-from mp3_to_nbs.config import ConversionConfig, PitchAlgorithm, get_preset, PRESETS
+from mp3_to_nbs.config import PRESETS, ConversionConfig, PitchAlgorithm, get_preset
 
 
 class TestConversionConfig:

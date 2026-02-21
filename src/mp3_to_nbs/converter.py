@@ -11,7 +11,6 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from mp3_to_nbs.audio import DetectedNote, analyze, load_audio
 from mp3_to_nbs.config import ConversionConfig
@@ -24,6 +23,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Result
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ConversionResult:
@@ -55,6 +55,7 @@ class ConversionResult:
 # ---------------------------------------------------------------------------
 # Pipeline
 # ---------------------------------------------------------------------------
+
 
 def _quantize_to_tick(time_sec: float, tempo: float) -> int:
     """Snap a timestamp to the nearest tick boundary.
@@ -101,14 +102,16 @@ def _map_notes(
         if velocity == 0:
             continue
 
-        nbs_notes.append(NBSNote(
-            tick=tick,
-            instrument=instrument_id,
-            key=key,
-            velocity=velocity,
-            panning=100,  # center
-            pitch=fine_pitch,
-        ))
+        nbs_notes.append(
+            NBSNote(
+                tick=tick,
+                instrument=instrument_id,
+                key=key,
+                velocity=velocity,
+                panning=100,  # center
+                pitch=fine_pitch,
+            )
+        )
 
     return nbs_notes
 
@@ -118,7 +121,7 @@ def convert(
     output_path: str | Path | None = None,
     config: ConversionConfig | None = None,
     *,
-    progress_callback: Optional[callable] = None,
+    progress_callback: callable | None = None,
 ) -> ConversionResult:
     """Convert an audio file to NBS format.
 
@@ -209,7 +212,6 @@ def convert(
     song_ticks = max((n.tick for n in nbs_notes), default=0)
 
     # Count layers actually used (re-derive from allocation)
-    ticks_per_layer: dict[int, set[int]] = {}
     layer_count = 0
     tick_layer_used: dict[int, int] = {}
     for note in sorted(nbs_notes, key=lambda n: n.tick):

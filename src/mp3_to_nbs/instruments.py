@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -35,6 +33,7 @@ A4_MIDI = 69
 # ---------------------------------------------------------------------------
 # Instrument data
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class Instrument:
@@ -62,22 +61,22 @@ class Instrument:
 # for auto-instrument selection; they overlap intentionally so the
 # priority field can break ties.
 INSTRUMENTS: list[Instrument] = [
-    Instrument(0,  "harp",          "harp",           54, 78, priority=10),
-    Instrument(1,  "double_bass",   "bass",           30, 54, priority=8),
-    Instrument(2,  "bass_drum",     "basedrum",       30, 54, priority=2),
-    Instrument(3,  "snare",         "snare",          54, 78, priority=1),
-    Instrument(4,  "click",         "hat",            66, 90, priority=1),
-    Instrument(5,  "guitar",        "guitar",         42, 66, priority=7),
-    Instrument(6,  "flute",         "flute",          66, 90, priority=6),
-    Instrument(7,  "bell",          "bell",           78, 102, priority=5),
-    Instrument(8,  "chime",         "chime",          78, 102, priority=4),
-    Instrument(9,  "xylophone",     "xylophone",      78, 102, priority=3),
-    Instrument(10, "iron_xylophone","iron_xylophone", 54, 78, priority=3),
-    Instrument(11, "cow_bell",      "cow_bell",       66, 90, priority=2),
-    Instrument(12, "didgeridoo",    "didgeridoo",     30, 54, priority=5),
-    Instrument(13, "bit",           "bit",            54, 78, priority=4),
-    Instrument(14, "banjo",         "banjo",          54, 78, priority=6),
-    Instrument(15, "pling",         "pling",          54, 78, priority=5),
+    Instrument(0, "harp", "harp", 54, 78, priority=10),
+    Instrument(1, "double_bass", "bass", 30, 54, priority=8),
+    Instrument(2, "bass_drum", "basedrum", 30, 54, priority=2),
+    Instrument(3, "snare", "snare", 54, 78, priority=1),
+    Instrument(4, "click", "hat", 66, 90, priority=1),
+    Instrument(5, "guitar", "guitar", 42, 66, priority=7),
+    Instrument(6, "flute", "flute", 66, 90, priority=6),
+    Instrument(7, "bell", "bell", 78, 102, priority=5),
+    Instrument(8, "chime", "chime", 78, 102, priority=4),
+    Instrument(9, "xylophone", "xylophone", 78, 102, priority=3),
+    Instrument(10, "iron_xylophone", "iron_xylophone", 54, 78, priority=3),
+    Instrument(11, "cow_bell", "cow_bell", 66, 90, priority=2),
+    Instrument(12, "didgeridoo", "didgeridoo", 30, 54, priority=5),
+    Instrument(13, "bit", "bit", 54, 78, priority=4),
+    Instrument(14, "banjo", "banjo", 54, 78, priority=6),
+    Instrument(15, "pling", "pling", 54, 78, priority=5),
 ]
 
 INSTRUMENT_BY_NAME: dict[str, Instrument] = {inst.name: inst for inst in INSTRUMENTS}
@@ -92,6 +91,7 @@ _MELODIC_INSTRUMENTS = [
 # ---------------------------------------------------------------------------
 # Conversion helpers
 # ---------------------------------------------------------------------------
+
 
 def hz_to_midi(frequency: float) -> float:
     """Convert a frequency in Hz to a (fractional) MIDI note number.
@@ -142,8 +142,7 @@ def pick_instrument(
         The best-matching :class:`Instrument`.
     """
     candidates = [
-        inst for inst in _MELODIC_INSTRUMENTS
-        if inst.low_midi <= midi_note <= inst.high_midi
+        inst for inst in _MELODIC_INSTRUMENTS if inst.low_midi <= midi_note <= inst.high_midi
     ]
     if not candidates:
         return INSTRUMENT_BY_NAME.get(default_name, INSTRUMENTS[0])

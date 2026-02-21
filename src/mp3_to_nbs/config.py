@@ -7,9 +7,8 @@ and built-in presets for common use cases.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class PitchAlgorithm(Enum):
@@ -84,13 +83,9 @@ class ConversionConfig:
                 f"than min_frequency ({self.min_frequency})"
             )
         if not 0.0 <= self.onset_sensitivity <= 1.0:
-            errors.append(
-                f"onset_sensitivity must be in [0, 1], got {self.onset_sensitivity}"
-            )
+            errors.append(f"onset_sensitivity must be in [0, 1], got {self.onset_sensitivity}")
         if self.velocity_sensitivity <= 0:
-            errors.append(
-                f"velocity_sensitivity must be positive, got {self.velocity_sensitivity}"
-            )
+            errors.append(f"velocity_sensitivity must be positive, got {self.velocity_sensitivity}")
         if self.max_layers < 1 or self.max_layers > 256:
             errors.append(f"max_layers must be in [1, 256], got {self.max_layers}")
         if self.hop_length < 64 or self.hop_length > 8192:

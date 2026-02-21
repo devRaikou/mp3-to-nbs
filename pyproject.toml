@@ -46,9 +46,9 @@ dev = [
 mp3-to-nbs = "mp3_to_nbs.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/devra/mp3-to-nbs"
-Repository = "https://github.com/devra/mp3-to-nbs"
-"Bug Tracker" = "https://github.com/devra/mp3-to-nbs/issues"
+Homepage = "https://github.com/devRaikou/mp3-to-nbs"
+Repository = "https://github.com/devRaikou/mp3-to-nbs"
+"Bug Tracker" = "https://github.com/devRaikou/mp3-to-nbs/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

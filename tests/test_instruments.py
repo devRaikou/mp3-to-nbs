@@ -1,10 +1,6 @@
 """Tests for mp3_to_nbs.instruments."""
 
-import pytest
-
 from mp3_to_nbs.instruments import (
-    INSTRUMENTS,
-    INSTRUMENT_BY_NAME,
     frequency_to_note,
     hz_to_midi,
     midi_to_hz,

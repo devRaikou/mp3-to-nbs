@@ -26,7 +26,7 @@ from rich.table import Table
 from rich.text import Text
 
 from mp3_to_nbs import __version__
-from mp3_to_nbs.config import ConversionConfig, PitchAlgorithm, PRESETS, get_preset
+from mp3_to_nbs.config import PRESETS, ConversionConfig, PitchAlgorithm, get_preset
 from mp3_to_nbs.converter import convert
 
 console = Console()
@@ -35,6 +35,7 @@ console = Console()
 # ---------------------------------------------------------------------------
 # Argument parser
 # ---------------------------------------------------------------------------
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -60,25 +61,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the input audio file (MP3, WAV, FLAC, OGG).",
     )
     parser.add_argument(
-        "-o", "--output",
+        "-o",
+        "--output",
         type=str,
         default=None,
         help="Output .nbs file path. Defaults to <input>.nbs.",
     )
     parser.add_argument(
-        "-t", "--tempo",
+        "-t",
+        "--tempo",
         type=float,
         default=None,
         help="Ticks per second (default: 10). Higher = finer resolution.",
     )
     parser.add_argument(
-        "-i", "--instrument",
+        "-i",
+        "--instrument",
         type=str,
         default=None,
         help="Default NBS instrument (e.g. harp, bass, flute, guitar).",
     )
     parser.add_argument(
-        "-p", "--preset",
+        "-p",
+        "--preset",
         type=str,
         default=None,
         choices=sorted(PRESETS.keys()),
@@ -121,12 +126,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Author name for the NBS header.",
     )
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         action="store_true",
         help="Enable detailed debug logging.",
     )
     parser.add_argument(
-        "-q", "--quiet",
+        "-q",
+        "--quiet",
         action="store_true",
         help="Suppress all output except errors.",
     )
@@ -143,6 +150,7 @@ def _build_parser() -> argparse.ArgumentParser:
 # CLI logic
 # ---------------------------------------------------------------------------
 
+
 def _setup_logging(verbose: bool, quiet: bool) -> None:
     """Configure logging with Rich handler."""
     level = logging.WARNING
@@ -155,21 +163,20 @@ def _setup_logging(verbose: bool, quiet: bool) -> None:
         level=level,
         format="%(message)s",
         datefmt="[%X]",
-        handlers=[RichHandler(
-            console=console,
-            show_time=verbose,
-            show_path=verbose,
-            rich_tracebacks=True,
-        )],
+        handlers=[
+            RichHandler(
+                console=console,
+                show_time=verbose,
+                show_path=verbose,
+                rich_tracebacks=True,
+            )
+        ],
     )
 
 
 def _build_config(args: argparse.Namespace) -> ConversionConfig:
     """Merge CLI arguments into a ConversionConfig."""
-    if args.preset:
-        config = get_preset(args.preset)
-    else:
-        config = ConversionConfig()
+    config = get_preset(args.preset) if args.preset else ConversionConfig()
 
     # Override with explicit CLI flags
     if args.tempo is not None:
@@ -202,11 +209,13 @@ def _print_banner(quiet: bool) -> None:
     banner.append("mp3-to-nbs", style="bold white")
     banner.append(f" v{__version__}", style="dim")
 
-    console.print(Panel(
-        banner,
-        border_style="blue",
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            banner,
+            border_style="blue",
+            padding=(0, 2),
+        )
+    )
 
 
 def _print_summary(result, quiet: bool) -> None:
@@ -238,15 +247,14 @@ def _print_summary(result, quiet: bool) -> None:
     console.print()
     console.print(table)
     console.print()
-    console.print(
-        f"  [bold green]OK[/bold green] Saved to [bold]{result.output_path}[/bold]"
-    )
+    console.print(f"  [bold green]OK[/bold green] Saved to [bold]{result.output_path}[/bold]")
     console.print()
 
 
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+
 
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point.

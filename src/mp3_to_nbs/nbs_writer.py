@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import pynbs
 
@@ -20,6 +19,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data types
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class NBSNote:
@@ -46,6 +46,7 @@ class NBSNote:
 # Layer allocation
 # ---------------------------------------------------------------------------
 
+
 def _allocate_layers(
     notes: list[NBSNote],
     max_layers: int,
@@ -63,7 +64,6 @@ def _allocate_layers(
         List of (note, layer_index) tuples.
     """
     # Track which layers are occupied at each tick
-    tick_layers: dict[int, set[int]] = {}
     placed: list[tuple[NBSNote, int]] = []
 
     # Group notes by tick for overflow handling
@@ -103,6 +103,7 @@ def _allocate_layers(
 # ---------------------------------------------------------------------------
 # Writer
 # ---------------------------------------------------------------------------
+
 
 def write_nbs(
     notes: list[NBSNote],
@@ -169,17 +170,23 @@ def write_nbs(
     max_layer_used = max((layer for _, layer in placed), default=0)
     while len(nbs_file.layers) <= max_layer_used:
         layer_id = len(nbs_file.layers)
-        nbs_file.layers.append(pynbs.Layer(
-            id=layer_id,
-            name=f"Layer {layer_id + 1}",
-            lock=False,
-            volume=100,
-            panning=100,
-        ))
+        nbs_file.layers.append(
+            pynbs.Layer(
+                id=layer_id,
+                name=f"Layer {layer_id + 1}",
+                lock=False,
+                volume=100,
+                panning=100,
+            )
+        )
 
     # Save
     nbs_file.save(str(output))
-    logger.info("NBS file saved: %s (%d notes across %d layers)",
-                output.name, len(placed), max_layer_used + 1)
+    logger.info(
+        "NBS file saved: %s (%d notes across %d layers)",
+        output.name,
+        len(placed),
+        max_layer_used + 1,
+    )
 
     return output

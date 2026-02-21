@@ -37,7 +37,7 @@
 ### From source
 
 ```bash
-git clone https://github.com/devra/mp3-to-nbs.git
+git clone https://github.com/devRaikou/mp3-to-nbs.git
 cd mp3-to-nbs
 pip install .
 ```

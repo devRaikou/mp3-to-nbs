@@ -18,7 +18,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import librosa
 import numpy as np
@@ -31,6 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class DetectedNote:
@@ -62,6 +62,7 @@ class AudioData:
 # ---------------------------------------------------------------------------
 # Loading
 # ---------------------------------------------------------------------------
+
 
 def load_audio(path: str | Path, sample_rate: int = 22050) -> AudioData:
     """Load an audio file and return mono samples at the given rate.
@@ -101,6 +102,7 @@ def load_audio(path: str | Path, sample_rate: int = 22050) -> AudioData:
 # ---------------------------------------------------------------------------
 # Pitch tracking
 # ---------------------------------------------------------------------------
+
 
 def _track_pitch_pyin(
     audio: AudioData,
@@ -176,6 +178,7 @@ def _track_pitch_piptrack(
 # RMS amplitude
 # ---------------------------------------------------------------------------
 
+
 def _compute_rms(
     audio: AudioData,
     config: ConversionConfig,
@@ -196,6 +199,7 @@ def _compute_rms(
 # ---------------------------------------------------------------------------
 # Onset detection
 # ---------------------------------------------------------------------------
+
 
 def _detect_onsets(
     audio: AudioData,
@@ -235,6 +239,7 @@ def _detect_onsets(
 # ---------------------------------------------------------------------------
 # Frame-based note extraction (primary strategy)
 # ---------------------------------------------------------------------------
+
 
 def _extract_notes_from_frames(
     pitch_times: np.ndarray,
@@ -281,16 +286,18 @@ def _extract_notes_from_frames(
         amp = float(np.mean(region_amps))
 
         # Apply velocity sensitivity curve
-        amp = amp ** config.velocity_sensitivity
+        amp = amp**config.velocity_sensitivity
         amp = max(0.0, min(1.0, amp))
 
         if amp > 0.01:  # Skip near-silent regions
-            notes.append(DetectedNote(
-                time=start_time,
-                frequency=freq,
-                amplitude=amp,
-                duration=duration,
-            ))
+            notes.append(
+                DetectedNote(
+                    time=start_time,
+                    frequency=freq,
+                    amplitude=amp,
+                    duration=duration,
+                )
+            )
 
     for i in range(n_frames):
         freq = float(frequencies[i])
@@ -337,6 +344,7 @@ def _extract_notes_from_frames(
 # ---------------------------------------------------------------------------
 # Chroma-based note extraction (fallback for complex audio)
 # ---------------------------------------------------------------------------
+
 
 def _extract_notes_from_chroma(
     audio: AudioData,
@@ -409,28 +417,32 @@ def _extract_notes_from_chroma(
                     duration = t - start_t
 
                     if duration >= 0.05:  # Minimum 50ms
-                        note_amp = amp ** config.velocity_sensitivity
+                        note_amp = amp**config.velocity_sensitivity
                         note_amp = max(0.0, min(1.0, note_amp))
 
                         if note_amp > 0.01:
-                            notes.append(DetectedNote(
-                                time=start_t,
-                                frequency=chroma_to_freq[bin_idx],
-                                amplitude=note_amp,
-                                duration=duration,
-                            ))
+                            notes.append(
+                                DetectedNote(
+                                    time=start_t,
+                                    frequency=chroma_to_freq[bin_idx],
+                                    amplitude=note_amp,
+                                    duration=duration,
+                                )
+                            )
 
     # Emit remaining active notes
     end_time = float(times[-1]) if len(times) > 0 else 0
     for bin_idx, start_t in active.items():
         duration = end_time - start_t
         if duration >= 0.05:
-            notes.append(DetectedNote(
-                time=start_t,
-                frequency=chroma_to_freq[bin_idx],
-                amplitude=0.5,
-                duration=duration,
-            ))
+            notes.append(
+                DetectedNote(
+                    time=start_t,
+                    frequency=chroma_to_freq[bin_idx],
+                    amplitude=0.5,
+                    duration=duration,
+                )
+            )
 
     return notes
 
@@ -438,6 +450,7 @@ def _extract_notes_from_chroma(
 # ---------------------------------------------------------------------------
 # Main analysis entry point
 # ---------------------------------------------------------------------------
+
 
 def analyze(
     audio: AudioData,

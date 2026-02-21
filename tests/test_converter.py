@@ -1,6 +1,5 @@
 """Tests for the end-to-end conversion pipeline."""
 
-import tempfile
 from pathlib import Path
 
 import numpy as np
