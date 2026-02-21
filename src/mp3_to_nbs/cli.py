@@ -198,7 +198,7 @@ def _print_banner(quiet: bool) -> None:
         return
 
     banner = Text()
-    banner.append("♪ ", style="bold magenta")
+    banner.append("# ", style="bold magenta")
     banner.append("mp3-to-nbs", style="bold white")
     banner.append(f" v{__version__}", style="dim")
 
@@ -239,7 +239,7 @@ def _print_summary(result, quiet: bool) -> None:
     console.print(table)
     console.print()
     console.print(
-        f"  [bold green]✓[/bold green] Saved to [bold]{result.output_path}[/bold]"
+        f"  [bold green]OK[/bold green] Saved to [bold]{result.output_path}[/bold]"
     )
     console.print()
 
@@ -294,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
             console=console,
             disable=args.quiet,
         ) as progress:
-            task_id = progress.add_task("Converting…", total=len(steps))
+            task_id = progress.add_task("Converting...", total=len(steps))
 
             def on_progress(step_name: str, fraction: float) -> None:
                 if fraction >= 1.0 and step_name not in step_progress:

@@ -168,8 +168,10 @@ def write_nbs(
     # Configure layers
     max_layer_used = max((layer for _, layer in placed), default=0)
     while len(nbs_file.layers) <= max_layer_used:
+        layer_id = len(nbs_file.layers)
         nbs_file.layers.append(pynbs.Layer(
-            name=f"Layer {len(nbs_file.layers) + 1}",
+            id=layer_id,
+            name=f"Layer {layer_id + 1}",
             lock=False,
             volume=100,
             panning=100,

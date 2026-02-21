@@ -1,9 +1,16 @@
 """
 Audio analysis pipeline.
 
-Handles MP3 loading, onset detection, pitch tracking, and amplitude
-extraction via librosa.  Returns a list of detected note events that
-the converter can map to NBS notes.
+Handles MP3 loading, pitch tracking, onset detection, and amplitude
+extraction via librosa.  Supports two analysis strategies:
+
+- **Frame-based** (default): scans every frame for voiced pitch and groups
+  consecutive voiced frames into note events.  Produces the most complete
+  representation of the audio.
+- **Onset-based**: only emits notes at detected onset (attack) times.
+  Better for percussive / rhythmic material but can miss sustained tones.
+
+The two strategies can also be combined.
 """
 
 from __future__ import annotations
@@ -92,44 +99,8 @@ def load_audio(path: str | Path, sample_rate: int = 22050) -> AudioData:
 
 
 # ---------------------------------------------------------------------------
-# Analysis
+# Pitch tracking
 # ---------------------------------------------------------------------------
-
-def _detect_onsets(
-    audio: AudioData,
-    config: ConversionConfig,
-) -> np.ndarray:
-    """Find onset frames and convert to sample times.
-
-    Returns an array of onset times in seconds.
-    """
-    # Onset strength envelope
-    onset_env = librosa.onset.onset_strength(
-        y=audio.samples,
-        sr=audio.sample_rate,
-        hop_length=config.hop_length,
-    )
-
-    # Adaptive threshold: map sensitivity 0–1 to delta 0.2–0.02
-    delta = 0.2 - 0.18 * config.onset_sensitivity
-
-    onset_frames = librosa.onset.onset_detect(
-        y=audio.samples,
-        sr=audio.sample_rate,
-        hop_length=config.hop_length,
-        onset_envelope=onset_env,
-        delta=delta,
-        backtrack=True,
-    )
-
-    onset_times = librosa.frames_to_time(
-        onset_frames,
-        sr=audio.sample_rate,
-        hop_length=config.hop_length,
-    )
-    logger.info("Detected %d onsets", len(onset_times))
-    return onset_times
-
 
 def _track_pitch_pyin(
     audio: AudioData,
@@ -201,6 +172,10 @@ def _track_pitch_piptrack(
     return times, f0, voiced
 
 
+# ---------------------------------------------------------------------------
+# RMS amplitude
+# ---------------------------------------------------------------------------
+
 def _compute_rms(
     audio: AudioData,
     config: ConversionConfig,
@@ -218,18 +193,265 @@ def _compute_rms(
     return rms
 
 
+# ---------------------------------------------------------------------------
+# Onset detection
+# ---------------------------------------------------------------------------
+
+def _detect_onsets(
+    audio: AudioData,
+    config: ConversionConfig,
+) -> np.ndarray:
+    """Find onset frames and convert to sample times.
+
+    Returns an array of onset times in seconds.
+    """
+    onset_env = librosa.onset.onset_strength(
+        y=audio.samples,
+        sr=audio.sample_rate,
+        hop_length=config.hop_length,
+    )
+
+    # Adaptive threshold: map sensitivity 0–1 to delta 0.2–0.02
+    delta = 0.2 - 0.18 * config.onset_sensitivity
+
+    onset_frames = librosa.onset.onset_detect(
+        y=audio.samples,
+        sr=audio.sample_rate,
+        hop_length=config.hop_length,
+        onset_envelope=onset_env,
+        delta=delta,
+        backtrack=True,
+    )
+
+    onset_times = librosa.frames_to_time(
+        onset_frames,
+        sr=audio.sample_rate,
+        hop_length=config.hop_length,
+    )
+    logger.info("Detected %d onsets", len(onset_times))
+    return onset_times
+
+
+# ---------------------------------------------------------------------------
+# Frame-based note extraction (primary strategy)
+# ---------------------------------------------------------------------------
+
+def _extract_notes_from_frames(
+    pitch_times: np.ndarray,
+    frequencies: np.ndarray,
+    rms: np.ndarray,
+    config: ConversionConfig,
+) -> list[DetectedNote]:
+    """Group consecutive voiced frames into note events.
+
+    Walks through every analysis frame.  When a voiced pitch is found,
+    a note region starts and continues as long as the pitch stays within
+    ±1 semitone (6%).  When the pitch jumps or drops to zero, the region
+    ends and a :class:`DetectedNote` is emitted.
+
+    This approach captures sustained notes, vibrato, and pitch bends
+    much better than onset-only detection.
+    """
+    notes: list[DetectedNote] = []
+
+    if len(frequencies) == 0:
+        return notes
+
+    n_frames = len(frequencies)
+    min_freq = config.min_frequency
+    max_freq = config.max_frequency
+
+    # State for the current note region
+    region_start: int | None = None
+    region_freqs: list[float] = []
+    region_amps: list[float] = []
+
+    def _emit_region():
+        """Finalise the current region into a DetectedNote."""
+        if region_start is None or not region_freqs:
+            return
+
+        start_time = float(pitch_times[region_start])
+        end_idx = region_start + len(region_freqs) - 1
+        end_time = float(pitch_times[min(end_idx, n_frames - 1)])
+        duration = max(end_time - start_time, 0.02)
+
+        # Use the median frequency and mean amplitude for the region
+        freq = float(np.median(region_freqs))
+        amp = float(np.mean(region_amps))
+
+        # Apply velocity sensitivity curve
+        amp = amp ** config.velocity_sensitivity
+        amp = max(0.0, min(1.0, amp))
+
+        if amp > 0.01:  # Skip near-silent regions
+            notes.append(DetectedNote(
+                time=start_time,
+                frequency=freq,
+                amplitude=amp,
+                duration=duration,
+            ))
+
+    for i in range(n_frames):
+        freq = float(frequencies[i])
+        amp = float(rms[min(i, len(rms) - 1)])
+
+        is_voiced = min_freq <= freq <= max_freq
+
+        if is_voiced:
+            if region_start is None:
+                # Start new region
+                region_start = i
+                region_freqs = [freq]
+                region_amps = [amp]
+            else:
+                # Check if pitch is close to the current region
+                median_freq = np.median(region_freqs)
+
+                # Allow ±1 semitone (ratio of ~1.06)
+                ratio = freq / median_freq if median_freq > 0 else 999
+                if 0.94 <= ratio <= 1.06:
+                    # Continue region
+                    region_freqs.append(freq)
+                    region_amps.append(amp)
+                else:
+                    # Pitch jump — end current region, start new one
+                    _emit_region()
+                    region_start = i
+                    region_freqs = [freq]
+                    region_amps = [amp]
+        else:
+            # Unvoiced frame — end current region
+            if region_start is not None:
+                _emit_region()
+                region_start = None
+                region_freqs = []
+                region_amps = []
+
+    # Emit final region
+    _emit_region()
+
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# Chroma-based note extraction (fallback for complex audio)
+# ---------------------------------------------------------------------------
+
+def _extract_notes_from_chroma(
+    audio: AudioData,
+    config: ConversionConfig,
+) -> list[DetectedNote]:
+    """Extract notes using chromagram analysis.
+
+    This is a fallback strategy for complex, polyphonic audio (e.g.
+    full songs with drums, bass, and melody).  It uses the chromagram
+    to detect which pitch classes are active at each time frame and
+    emits a note for each active chroma bin.
+
+    Produces many more notes than pYIN but sacrifices octave accuracy
+    (chroma folds all octaves together).
+    """
+    # Compute chromagram
+    chroma = librosa.feature.chroma_cqt(
+        y=audio.samples,
+        sr=audio.sample_rate,
+        hop_length=config.hop_length,
+        n_chroma=12,
+    )
+
+    times = librosa.times_like(
+        chroma[0],
+        sr=audio.sample_rate,
+        hop_length=config.hop_length,
+    )
+
+    rms = _compute_rms(audio, config)
+
+    notes: list[DetectedNote] = []
+
+    # Threshold: only consider chroma bins above this energy
+    chroma_threshold = 0.4
+
+    # Note names to approximate frequency (octave 4)
+    chroma_to_freq = [
+        261.63,  # C4
+        277.18,  # C#4
+        293.66,  # D4
+        311.13,  # D#4
+        329.63,  # E4
+        349.23,  # F4
+        369.99,  # F#4
+        392.00,  # G4
+        415.30,  # G#4
+        440.00,  # A4
+        466.16,  # A#4
+        493.88,  # B4
+    ]
+
+    # Track active notes per chroma bin to avoid duplicates
+    active: dict[int, float] = {}  # bin -> start_time
+
+    for frame_idx in range(len(times)):
+        t = float(times[frame_idx])
+        rms_idx = min(frame_idx, len(rms) - 1)
+        amp = float(rms[rms_idx])
+
+        for bin_idx in range(12):
+            energy = float(chroma[bin_idx, frame_idx])
+
+            if energy > chroma_threshold:
+                if bin_idx not in active:
+                    active[bin_idx] = t
+            else:
+                if bin_idx in active:
+                    start_t = active.pop(bin_idx)
+                    duration = t - start_t
+
+                    if duration >= 0.05:  # Minimum 50ms
+                        note_amp = amp ** config.velocity_sensitivity
+                        note_amp = max(0.0, min(1.0, note_amp))
+
+                        if note_amp > 0.01:
+                            notes.append(DetectedNote(
+                                time=start_t,
+                                frequency=chroma_to_freq[bin_idx],
+                                amplitude=note_amp,
+                                duration=duration,
+                            ))
+
+    # Emit remaining active notes
+    end_time = float(times[-1]) if len(times) > 0 else 0
+    for bin_idx, start_t in active.items():
+        duration = end_time - start_t
+        if duration >= 0.05:
+            notes.append(DetectedNote(
+                time=start_t,
+                frequency=chroma_to_freq[bin_idx],
+                amplitude=0.5,
+                duration=duration,
+            ))
+
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# Main analysis entry point
+# ---------------------------------------------------------------------------
+
 def analyze(
     audio: AudioData,
     config: ConversionConfig,
 ) -> list[DetectedNote]:
     """Run the full analysis pipeline on loaded audio.
 
-    Steps:
-        1. Detect onset times.
-        2. Track pitch across all frames.
-        3. Compute per-frame RMS amplitude.
-        4. For each onset, sample the pitch and amplitude at that time
-           and emit a :class:`DetectedNote`.
+    Uses a multi-strategy approach:
+        1. Run pitch tracking (pYIN or piptrack) and extract notes from
+           consecutive voiced frames.
+        2. If frame-based extraction finds very few notes (< 5), fall
+           back to chromagram analysis which handles complex polyphonic
+           audio better.
+        3. Compute RMS amplitude for velocity mapping.
 
     Args:
         audio: Loaded audio data.
@@ -238,68 +460,33 @@ def analyze(
     Returns:
         A list of :class:`DetectedNote` instances sorted by time.
     """
-    onset_times = _detect_onsets(audio, config)
-
-    # Pitch tracking
+    # --- Pitch tracking ---
     if config.pitch_algorithm == PitchAlgorithm.PYIN:
         pitch_times, frequencies, voiced = _track_pitch_pyin(audio, config)
     else:
         pitch_times, frequencies, voiced = _track_pitch_piptrack(audio, config)
 
-    # RMS amplitude envelope
+    # --- RMS amplitude ---
     rms = _compute_rms(audio, config)
-    rms_times = librosa.times_like(
-        rms,
-        sr=audio.sample_rate,
-        hop_length=config.hop_length,
-    )
 
-    notes: list[DetectedNote] = []
+    # --- Primary strategy: frame-based note extraction ---
+    notes = _extract_notes_from_frames(pitch_times, frequencies, rms, config)
+    logger.info("Frame-based extraction: %d notes", len(notes))
 
-    for onset_t in onset_times:
-        # Find nearest pitch frame
-        pitch_idx = int(np.argmin(np.abs(pitch_times - onset_t)))
-        freq = float(frequencies[pitch_idx])
-
-        # Skip unvoiced / silent frames
-        if freq < config.min_frequency or freq > config.max_frequency:
-            continue
-
-        # Sample amplitude at onset
-        rms_idx = int(np.argmin(np.abs(rms_times - onset_t)))
-        amp = float(rms[rms_idx])
-
-        # Apply velocity sensitivity curve
-        amp = amp ** config.velocity_sensitivity
-        amp = max(0.0, min(1.0, amp))
-
-        # Estimate duration (time until next onset or end)
-        note_idx = len(notes)
-        duration = 0.0
-
-        notes.append(DetectedNote(
-            time=float(onset_t),
-            frequency=freq,
-            amplitude=amp,
-            duration=duration,
-        ))
-
-    # Fill in durations (gap to next note, capped at 2 seconds)
-    for i in range(len(notes) - 1):
-        gap = notes[i + 1].time - notes[i].time
-        notes[i] = DetectedNote(
-            time=notes[i].time,
-            frequency=notes[i].frequency,
-            amplitude=notes[i].amplitude,
-            duration=min(gap, 2.0),
+    # --- Fallback: chromagram for complex audio ---
+    if len(notes) < 5:
+        logger.info(
+            "Few notes from pitch tracking (%d) — trying chromagram analysis",
+            len(notes),
         )
-    if notes:
-        notes[-1] = DetectedNote(
-            time=notes[-1].time,
-            frequency=notes[-1].frequency,
-            amplitude=notes[-1].amplitude,
-            duration=0.5,
-        )
+        chroma_notes = _extract_notes_from_chroma(audio, config)
+        logger.info("Chromagram extraction: %d notes", len(chroma_notes))
+
+        if len(chroma_notes) > len(notes):
+            notes = chroma_notes
+
+    # --- Sort by time ---
+    notes.sort(key=lambda n: n.time)
 
     logger.info("Analysis complete: %d notes detected", len(notes))
     return notes
