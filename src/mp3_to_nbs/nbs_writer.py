@@ -31,7 +31,8 @@ class NBSNote:
         instrument: Vanilla instrument ID (0-15).
         key: NBS key (0-24).
         velocity: Note velocity (0-100).
-        panning: Stereo panning (0=left, 100=center, 200=right).
+        panning: Stereo panning (-100=left, 0=center, 100=right).
+            Note: pynbs adds 100 when writing to disk (NBS spec: 0-200).
         pitch: Fine pitch adjustment in cents (-100 to +100).
     """
 
@@ -39,7 +40,7 @@ class NBSNote:
     instrument: int
     key: int
     velocity: int = 100
-    panning: int = 100
+    panning: int = 0  # 0 = center (pynbs adds +100 when writing)
     pitch: int = 0
 
 
@@ -176,7 +177,7 @@ def write_nbs(
                 name=f"Layer {layer_id + 1}",
                 lock=False,
                 volume=100,
-                panning=100,  # 100 = center (NBS spec: 0=left, 100=center, 200=right)
+                panning=0,  # 0 = center (pynbs adds +100 when writing to disk)
             )
         )
 

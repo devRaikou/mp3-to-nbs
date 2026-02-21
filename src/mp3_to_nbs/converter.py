@@ -110,7 +110,7 @@ def _map_notes(
                 instrument=instrument_id,
                 key=key,
                 velocity=velocity,
-                panning=100,  # center
+                panning=0,  # 0 = center (pynbs adds +100 when writing)
                 pitch=fine_pitch,
             )
         )
